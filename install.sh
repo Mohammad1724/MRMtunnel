@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 #
-# MRMtunnel installer - Hybrid v5.0 Pack
-# Merged: BackPack Go engine + backhaulMRM shell CLI
+# MRMtunnel installer - Hybrid v5.0 Pack FINAL
 # Repo: https://github.com/Mohammad1724/MRMtunnel
-#
 # Installs:
-#   /usr/local/bin/mrmtunnel      - Go engine with web panel 7777, Telegram, backup
-#   /usr/local/bin/backhaulMRM    - Shell CLI lightweight (396 lines, cron, view/edit)
+#   /usr/local/bin/mrmtunnel      - Go engine with web panel 7777
+#   /usr/local/bin/backhaulMRM    - Shell CLI lightweight (396 lines)
 #
 # Works from Iran with mirrors
 #
@@ -32,10 +30,10 @@ if [[ $EUID -ne 0 ]]; then err "Run as root: sudo bash install.sh"; exit 1; fi
 case "$(uname -m)" in
   x86_64|amd64) ARCH="amd64" ;;
   aarch64|arm64) ARCH="arm64" ;;
-  *) ARCH="" ;;
+  *) ARCH="amd64" ;;
 esac
 
-mkdir -p /etc/mrmtunnel /etc/backpack 2>/dev/null || true
+mkdir -p /etc/mrmtunnel 2>/dev/null || true
 
 download_go() {
   local file="go${GO_VERSION}.linux-${ARCH}.tar.gz" out="$1"
@@ -53,47 +51,29 @@ go_new_enough() {
 ensure_go() {
   command -v go >/dev/null 2>&1 && go_new_enough "$(command -v go)" && { info "Go: $(go version)"; return; }
   [[ -x /usr/local/go/bin/go ]] && go_new_enough /usr/local/go/bin/go && { export PATH="/usr/local/go/bin:$PATH"; info "Go: $(go version)"; return; }
-  local bundled; bundled="$(ls "$SCRIPT_DIR"/prerequisite/go*.linux-"${ARCH}".tar.gz 2>/dev/null | head -1 || true)"
-  if [[ -n "$bundled" ]]; then
+  if [[ -n "$(ls "$SCRIPT_DIR"/prerequisite/go*.linux-"${ARCH}".tar.gz 2>/dev/null | head -1 || true)" ]]; then
+    local bundled; bundled="$(ls "$SCRIPT_DIR"/prerequisite/go*.linux-"${ARCH}".tar.gz 2>/dev/null | head -1)"
     info "Using bundled Go: $(basename "$bundled")"; rm -rf /usr/local/go && tar -C /usr/local -xzf "$bundled"
     export PATH="/usr/local/go/bin:$PATH"; return
   fi
-  [[ -z "$ARCH" ]] && { err "Unsupported arch"; exit 1; }
   warn "Installing Go ${GO_VERSION}..."
   download_go /tmp/go-mrm.tgz || { err "Could not obtain Go"; exit 1; }
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go-mrm.tgz; export PATH="/usr/local/go/bin:$PATH"; info "$(go version)"
 }
 
-build_go_engine() {
-  cd "$SCRIPT_DIR"
-  if [[ -d "$SCRIPT_DIR/go" ]]; then
-    warn "Moving stray ./go cache"; rm -rf "$HOME/mrmtunnel-gocache"; mv "$SCRIPT_DIR/go" "$HOME/mrmtunnel-gocache"
-  fi
-  ensure_go; export PATH="/usr/local/go/bin:$PATH"
-  info "Building MRMtunnel Go engine (proxy: ${GOPROXY})..."
-  go mod download 2>/dev/null || true
-  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN_GO" .
-  echo "$SCRIPT_DIR" > /etc/mrmtunnel/install_path
-  chmod +x "$BIN_GO"
-  info "Installed Go engine -> $BIN_GO"
-}
-
-install_shell_cli() {
-  if [[ -f "$SCRIPT_DIR/backhaulMRM.sh" ]]; then
-    info "Installing shell CLI backhaulMRM.sh -> $BIN_SH"
-    install -m 0755 "$SCRIPT_DIR/backhaulMRM.sh" "$BIN_SH"
-    ln -sf "$BIN_SH" /usr/local/bin/backhaul 2>/dev/null || true
-    ln -sf "$BIN_SH" /usr/bin/backhaulMRM 2>/dev/null || true
-    chmod +x "$BIN_SH"
-  else
-    warn "backhaulMRM.sh not found in $SCRIPT_DIR, skipping shell CLI"
-  fi
-}
-
-# Try prebuilt first
-for cand in "$SCRIPT_DIR/mrmtunnel" "$SCRIPT_DIR/backpack" "$SCRIPT_DIR/dist/mrmtunnel-linux-${ARCH}" "$SCRIPT_DIR/dist/backpack-linux-${ARCH}" "$SCRIPT_DIR/prerequisite/mrmtunnel-linux-${ARCH}"; do
-  if [[ -f "$cand" ]]; then
-    info "Installing local prebuilt: $cand -> $BIN_GO"
+# FIXED: Also check for mrmtunnel_linux_amd64 and mrmtunnel_linux_arm64 in root (your current files)
+for cand in \
+  "$SCRIPT_DIR/mrmtunnel" \
+  "$SCRIPT_DIR/mrmtunnel_linux_${ARCH}" \
+  "$SCRIPT_DIR/mrmtunnel_linux_amd64" \
+  "$SCRIPT_DIR/mrmtunnel_linux_arm64" \
+  "$SCRIPT_DIR/backpack" \
+  "$SCRIPT_DIR/dist/mrmtunnel-linux-${ARCH}" \
+  "$SCRIPT_DIR/dist/backpack-linux-${ARCH}" \
+  "$SCRIPT_DIR/prerequisite/mrmtunnel-linux-${ARCH}" \
+  "$SCRIPT_DIR/prerequisite/backpack-linux-${ARCH}"; do
+  if [[ -f "$cand" && -s "$cand" ]]; then
+    info "Installing local prebuilt binary: $(basename "$cand") -> $BIN_GO"
     install -m 0755 "$cand" "$BIN_GO"
     echo "$SCRIPT_DIR" > /etc/mrmtunnel/install_path
     PREBUILT=1
@@ -103,28 +83,47 @@ done
 
 if [[ "${PREBUILT:-}" != "1" ]]; then
   if [[ -f "$SCRIPT_DIR/go.mod" && -f "$SCRIPT_DIR/main.go" ]]; then
-    build_go_engine
+    info "Building MRMtunnel Go engine from source..."
+    if [[ -d "$SCRIPT_DIR/go" ]]; then rm -rf "$HOME/mrmtunnel-gocache"; mv "$SCRIPT_DIR/go" "$HOME/mrmtunnel-gocache"; fi
+    ensure_go; export PATH="/usr/local/go/bin:$PATH"
+    go mod download 2>/dev/null || true
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$BIN_GO" .
+    echo "$SCRIPT_DIR" > /etc/mrmtunnel/install_path
   else
-    err "No source found. Clone repo first:"
-    err "  git clone https://github.com/Mohammad1724/MRMtunnel.git && cd MRMtunnel && sudo bash install.sh"
-    exit 1
+    # No source, try downloading binary from GitHub releases as last resort
+    warn "No local binary and no source found, trying download from GitHub releases..."
+    local rel_url="https://github.com/Mohammad1724/MRMtunnel/releases/download/v5.0-MRM-Pack/mrmtunnel_linux_${ARCH}"
+    if curl -fsSL -o "$BIN_GO" "$rel_url" 2>/dev/null; then
+      chmod +x "$BIN_GO"
+      PREBUILT=1
+      info "Downloaded from releases -> $BIN_GO"
+    else
+      err "No binary found. Please upload mrmtunnel_linux_${ARCH} to your repo root or create a release."
+      err "Expected files: mrmtunnel_linux_amd64 or mrmtunnel_linux_arm64 in repo root"
+      exit 1
+    fi
   fi
 fi
 
-# Always install shell CLI too
-install_shell_cli
+# Install shell CLI
+if [[ -f "$SCRIPT_DIR/backhaulMRM.sh" ]]; then
+  info "Installing shell CLI: backhaulMRM.sh -> $BIN_SH"
+  install -m 0755 "$SCRIPT_DIR/backhaulMRM.sh" "$BIN_SH"
+  ln -sf "$BIN_SH" /usr/local/bin/backhaul 2>/dev/null || true
+  ln -sf "$BIN_SH" /usr/bin/backhaulMRM 2>/dev/null || true
+  ln -sf "$BIN_SH" /usr/local/bin/backhaulMRM.sh 2>/dev/null || true
+else
+  warn "backhaulMRM.sh not found, skipping shell CLI"
+fi
 
-chmod +x "$BIN_GO" "$BIN_SH" 2>/dev/null || true
+chmod +x "$BIN_GO" 2>/dev/null || true
+chmod +x "$BIN_SH" 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}Done! MRMtunnel v5.0 Pack installed${NC}"
 echo ""
-echo -e "  Go engine (full features):  ${YELLOW}sudo mrmtunnel${NC}"
-echo -e "    - Web panel: http://<ip>:7777"
-echo -e "    - Telegram + Backup + Best-Performance"
+echo -e "  Go engine (full):  ${YELLOW}sudo mrmtunnel${NC}  -> Web panel http://<ip>:7777"
+echo -e "  Shell CLI (lite):  ${YELLOW}sudo backhaulMRM${NC}  -> 396 lines, Cron, View/Edit"
 echo ""
-echo -e "  Shell CLI (lightweight):   ${YELLOW}sudo backhaulMRM${NC}  or  ${YELLOW}sudo backhaul${NC}"
-echo -e "    - 396 lines, Cron, View/Edit, simple menu"
-echo ""
-echo -e "  One-liner shell only: ${CYAN}bash <(curl -Ls https://raw.githubusercontent.com/Mohammad1724/MRMtunnel/main/backhaulMRM.sh)${NC}"
+echo -e "  One-liner shell: ${CYAN}bash <(curl -Ls https://raw.githubusercontent.com/Mohammad1724/MRMtunnel/main/backhaulMRM.sh)${NC}"
 echo ""
